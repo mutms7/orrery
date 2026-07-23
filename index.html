@@ -1,0 +1,1003 @@
+<title>Orrery · a gravity sandbox</title>
+<style>
+  :root {
+    --void: #07060f;
+    --ink: #100e1d;
+    --ink-2: #16132a;
+    --line: rgba(140, 134, 176, 0.16);
+    --line-2: rgba(140, 134, 176, 0.28);
+    --text: #eae8f6;
+    --muted: #928dad;
+    --dim: #5b5678;
+    --accent: #b98cff;
+    --accent-soft: rgba(185, 140, 255, 0.16);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--void);
+    color: var(--text);
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* canvas is a replaced element — inset:0 alone won't stretch it, so pin the size explicitly */
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+  #stage.panning { cursor: grabbing; }
+
+  .no-select { user-select: none; -webkit-user-select: none; }
+
+  /* ---------- HUD ---------- */
+  .hud { position: fixed; top: 20px; left: 22px; z-index: 10; pointer-events: none; }
+  .title {
+    font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    font-weight: 600; font-size: 15px; letter-spacing: 0.42em;
+    text-transform: uppercase; color: var(--text);
+  }
+  .subtitle { margin-top: 3px; font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--dim); }
+  .readout {
+    margin-top: 18px; display: grid; grid-template-columns: auto auto; gap: 4px 16px;
+    font-size: 11px; font-variant-numeric: tabular-nums;
+  }
+  .readout .k { color: var(--muted); letter-spacing: 0.08em; }
+  .readout .v { color: var(--text); text-align: right; }
+  .readout .v.accent { color: var(--accent); }
+
+  /* ---------- dock ---------- */
+  .dock {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 10;
+    display: flex; align-items: center; gap: 8px; padding: 7px;
+    background: color-mix(in srgb, var(--ink) 84%, transparent);
+    border: 1px solid var(--line); border-radius: 15px;
+    backdrop-filter: blur(12px); box-shadow: 0 10px 34px rgba(0,0,0,0.5);
+  }
+  .seg { display: flex; background: rgba(0,0,0,0.28); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg button {
+    appearance: none; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 11px;
+    letter-spacing: 0.1em; text-transform: uppercase; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px rgba(185,140,255,.35); }
+  .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .divider { width: 1px; align-self: stretch; background: var(--line); margin: 2px 2px; }
+
+  .btn {
+    appearance: none; border: 1px solid transparent; background: transparent; color: var(--muted);
+    font: inherit; font-size: 11px; letter-spacing: 0.11em; text-transform: uppercase;
+    padding: 8px 12px; border-radius: 9px; cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .btn:hover { color: var(--text); background: var(--accent-soft); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn[aria-pressed="true"] { color: var(--text); background: var(--accent-soft); border-color: rgba(185,140,255,.4); }
+  .btn svg { width: 15px; height: 15px; display: block; }
+
+  /* ---------- zoom cluster ---------- */
+  .zoomc { position: fixed; right: 20px; bottom: 22px; z-index: 10; display: flex; flex-direction: column; gap: 6px; }
+  .zoomc button {
+    width: 38px; height: 38px; border-radius: 11px; border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--ink) 84%, transparent); color: var(--muted); font-size: 18px; cursor: pointer;
+    backdrop-filter: blur(12px); transition: color .15s, background .15s; line-height: 1;
+  }
+  .zoomc button:hover { color: var(--text); background: var(--accent-soft); }
+  .zoomc button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .zoomc button.reset { font-size: 12px; letter-spacing: .04em; }
+
+  /* ---------- hint ---------- */
+  .hint {
+    position: fixed; bottom: 76px; left: 50%; transform: translateX(-50%); z-index: 9;
+    font-size: 11px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--dim);
+    text-align: center; pointer-events: none; transition: opacity 0.6s ease; white-space: nowrap;
+  }
+  .hint b { color: var(--muted); font-weight: 600; }
+  .hint.gone { opacity: 0; }
+
+  /* ---------- settings panel ---------- */
+  .panel {
+    position: fixed; top: 0; right: 0; height: 100%; width: 300px; z-index: 20;
+    background: color-mix(in srgb, var(--ink) 92%, transparent);
+    border-left: 1px solid var(--line); backdrop-filter: blur(16px);
+    box-shadow: -18px 0 50px rgba(0,0,0,0.5);
+    transform: translateX(100%); transition: transform .32s cubic-bezier(.22,.8,.28,1);
+    display: flex; flex-direction: column; overflow-y: auto; padding: 22px 22px 30px;
+  }
+  .panel.open { transform: translateX(0); }
+  .panel h2 {
+    font-family: "Avenir Next", system-ui, sans-serif; font-size: 12px; font-weight: 600;
+    letter-spacing: 0.3em; text-transform: uppercase; color: var(--text);
+  }
+  .panel .close { align-self: flex-end; margin: -6px -6px 6px 0; background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1; padding: 4px 8px; }
+  .panel .close:hover { color: var(--text); }
+  .group { margin-top: 22px; }
+  .group > .label { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--dim); margin-bottom: 11px; }
+  .presetgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .presetgrid button {
+    appearance: none; border: 1px solid var(--line); background: rgba(255,255,255,0.02); color: var(--muted);
+    font: inherit; font-size: 11px; letter-spacing: 0.06em; padding: 10px 8px; border-radius: 9px; cursor: pointer;
+    transition: color .15s, background .15s, border-color .15s;
+  }
+  .presetgrid button:hover { color: var(--text); background: var(--accent-soft); border-color: var(--line-2); }
+  .presetgrid button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .ctrl { margin-bottom: 15px; }
+  .ctrl .row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .ctrl .row label { font-size: 11px; color: var(--muted); letter-spacing: 0.05em; }
+  .ctrl .row .val { font-size: 11px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--accent) var(--fill,50%), rgba(255,255,255,.09) var(--fill,50%)); outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%;
+    background: #f4f0ff; border: 2px solid var(--accent); cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+  input[type=range]::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: #f4f0ff; border: 2px solid var(--accent); cursor: pointer; }
+  input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .segfull { display: flex; background: rgba(0,0,0,0.28); border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 2px; }
+  .segfull button { flex: 1; appearance: none; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 10.5px;
+    letter-spacing: 0.06em; text-transform: uppercase; padding: 7px 4px; border-radius: 7px; cursor: pointer; transition: background .15s, color .15s; }
+  .segfull button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); }
+  .segfull button:hover { color: var(--text); }
+  .segfull button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .toggle-row span { font-size: 11px; color: var(--muted); }
+  .switch { position: relative; width: 40px; height: 22px; border-radius: 12px; background: rgba(255,255,255,.1); border: 1px solid var(--line); cursor: pointer; transition: background .18s; flex: none; }
+  .switch::after { content:""; position:absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #cfc9e6; transition: transform .18s, background .18s; }
+  .switch[aria-pressed="true"] { background: var(--accent-soft); border-color: rgba(185,140,255,.5); }
+  .switch[aria-pressed="true"]::after { transform: translateX(18px); background: var(--accent); }
+  .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (max-width: 620px) {
+    .readout { display: none; }
+    .hint { font-size: 10px; letter-spacing: .06em; white-space: normal; width: 84vw; }
+    .dock { gap: 5px; padding: 6px; }
+    .btn span.txt { display: none; }
+    .btn { padding: 8px; }
+    .panel { width: 100%; }
+    .title { font-size: 13px; }
+  }
+</style>
+
+<canvas id="stage"></canvas>
+
+<div class="hud no-select">
+  <div class="title">Orrery</div>
+  <div class="subtitle">a gravity sandbox</div>
+  <div class="readout" aria-hidden="true">
+    <span class="k">bodies</span><span class="v" id="r-count">0</span>
+    <span class="k">mass&nbsp;total</span><span class="v" id="r-mass">0</span>
+    <span class="k">merges</span><span class="v" id="r-merge">0</span>
+    <span class="k">zoom</span><span class="v" id="r-zoom">1.00×</span>
+    <span class="k">fps</span><span class="v" id="r-fps">—</span>
+  </div>
+</div>
+
+<div class="hint no-select" id="hint">
+  Drag to <b>fling</b> · scroll to <b>zoom</b> · right-drag to <b>pan</b> · <b>space</b> to pause
+</div>
+
+<div class="dock no-select" role="toolbar" aria-label="tools">
+  <div class="seg" role="group" aria-label="spawn mode">
+    <button id="m-fling" aria-pressed="true">Fling</button>
+    <button id="m-orbit" aria-pressed="false">Orbit</button>
+    <button id="m-anchor" aria-pressed="false">Anchor</button>
+  </div>
+  <div class="divider"></div>
+  <button class="btn" id="b-pause" aria-pressed="false" title="Pause (space)">
+    <svg viewBox="0 0 24 24" fill="currentColor" id="ic-pause"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    <span class="txt">Pause</span>
+  </button>
+  <button class="btn" id="b-clear" title="Clear (c)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 7h14M9 7V5h6v2M7 7l1 12h8l1-12"/></svg>
+    <span class="txt">Clear</span>
+  </button>
+  <button class="btn" id="b-save" title="Save image">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+    <span class="txt">Save</span>
+  </button>
+  <button class="btn" id="b-settings" aria-pressed="false" title="Settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke-linecap="round"/></svg>
+    <span class="txt">Tune</span>
+  </button>
+</div>
+
+<div class="zoomc no-select" aria-label="zoom">
+  <button id="z-in" title="Zoom in" aria-label="zoom in">+</button>
+  <button id="z-out" title="Zoom out" aria-label="zoom out">−</button>
+  <button id="z-reset" class="reset" title="Reset view (r)" aria-label="reset view">⌂</button>
+</div>
+
+<aside class="panel" id="panel" aria-label="settings" aria-hidden="true">
+  <button class="close" id="p-close" aria-label="close settings">×</button>
+  <h2>Controls</h2>
+
+  <div class="group">
+    <div class="label">Systems</div>
+    <div class="presetgrid">
+      <button data-preset="solar">Solar</button>
+      <button data-preset="binary">Binary</button>
+      <button data-preset="rings">Rings</button>
+      <button data-preset="bigbang">Big Bang</button>
+      <button data-preset="chaos">Chaos</button>
+      <button data-preset="empty">Empty</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="label">Physics</div>
+    <div class="ctrl">
+      <div class="row"><label for="s-grav">Gravity</label><span class="val" id="v-grav">0.90</span></div>
+      <input type="range" id="s-grav" min="0.2" max="2.2" step="0.05" value="0.9">
+    </div>
+    <div class="ctrl">
+      <div class="row"><label for="s-speed">Sim speed</label><span class="val" id="v-speed">1.00×</span></div>
+      <input type="range" id="s-speed" min="0.15" max="2.2" step="0.05" value="1">
+    </div>
+    <div class="ctrl">
+      <div class="row"><label for="s-star">Star mass</label><span class="val" id="v-star">2600</span></div>
+      <input type="range" id="s-star" min="600" max="6000" step="100" value="2600">
+    </div>
+    <div class="toggle-row"><span>Central star</span><button class="switch" id="t-star" aria-pressed="true" aria-label="central star"></button></div>
+  </div>
+
+  <div class="group">
+    <div class="label">Collisions</div>
+    <div class="segfull" role="group" aria-label="collision mode">
+      <button data-collide="merge" aria-pressed="true">Merge</button>
+      <button data-collide="bounce" aria-pressed="false">Bounce</button>
+      <button data-collide="off" aria-pressed="false">Off</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="label">Look</div>
+    <div class="segfull" role="group" aria-label="color by" style="margin-bottom:15px">
+      <button data-color="mass" aria-pressed="true">Color: Mass</button>
+      <button data-color="speed" aria-pressed="false">Color: Speed</button>
+    </div>
+    <div class="ctrl">
+      <div class="row"><label for="s-trail">Trail length</label><span class="val" id="v-trail">46</span></div>
+      <input type="range" id="s-trail" min="0" max="120" step="2" value="46">
+    </div>
+  </div>
+</aside>
+
+<script>
+(() => {
+  "use strict";
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  window.addEventListener("error", (e) => {
+    const msg = (e.message || "error") + " @" + (e.lineno || "?") + ":" + (e.colno || "?") + " | " + ((e.error && e.error.stack) || "");
+    window.__err = msg;
+    try { document.documentElement.setAttribute("data-orrery-error", msg); } catch (_) {}
+    try { const s = document.querySelector(".subtitle"); if (s) { s.textContent = "ERR " + msg.slice(0, 120); s.style.color = "#ff7597"; } } catch (_) {}
+  });
+  try {
+
+  // ---------- constants ----------
+  const SOFT = 14, DENSITY = 0.34, CAP = 16, CULL_R = 5400, MAX_BODIES = 260;
+  const SPEED_COLOR_MAX = 8;
+  const TAU = Math.PI * 2;
+
+  // ---------- settings ----------
+  const sett = { G: 0.9, speed: 1, starMass: 2600, star: true, collide: "merge", colorBy: "mass", trailLen: 46 };
+
+  // ---------- state ----------
+  let W = 0, H = 0, DPR = 1;
+  let bodies = [];            // includes fixed attractors (star / anchors)
+  let starBody = null;
+  let merges = 0;
+  let mode = "fling";
+  let paused = false;
+  const cam = { x: 0, y: 0, zoom: 1 };
+  const flashes = [];
+  let hover = null;
+
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+  const radiusOf = (m) => Math.max(1.6, Math.sqrt(m / (DENSITY * Math.PI)));
+
+  // world <-> screen
+  const sx = (wx) => (wx - cam.x) * cam.zoom + W / 2;
+  const sy = (wy) => (wy - cam.y) * cam.zoom + H / 2;
+  const wx = (px) => (px - W / 2) / cam.zoom + cam.x;
+  const wy = (py) => (py - H / 2) / cam.zoom + cam.y;
+
+  // ---------- palette ----------
+  const STOPS = [
+    [0.00, [ 79, 214, 255]],
+    [0.42, [138, 120, 255]],
+    [0.68, [255,  79, 163]],
+    [1.00, [255, 207,  92]],
+  ];
+  function ramp(t) {
+    t = clamp(t, 0, 1);
+    for (let i = 1; i < STOPS.length; i++) {
+      if (t <= STOPS[i][0]) {
+        const a = STOPS[i - 1], b = STOPS[i];
+        const f = (t - a[0]) / (b[0] - a[0]);
+        return [
+          Math.round(a[1][0] + (b[1][0] - a[1][0]) * f),
+          Math.round(a[1][1] + (b[1][1] - a[1][1]) * f),
+          Math.round(a[1][2] + (b[1][2] - a[1][2]) * f),
+        ];
+      }
+    }
+    return STOPS[STOPS.length - 1][1];
+  }
+  const rgb = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  function colorOf(b) {
+    if (sett.colorBy === "speed") {
+      const s = Math.hypot(b.vx, b.vy);
+      return ramp(s / SPEED_COLOR_MAX);
+    }
+    return ramp(b.mass / 900);
+  }
+
+  // ---------- body management ----------
+  function ensureStar() {
+    if (!sett.star) { removeStar(); return; }
+    if (!starBody) {
+      starBody = { x: cam.x, y: cam.y, vx: 0, vy: 0, mass: sett.starMass, r: radiusOf(sett.starMass), fixed: true, sun: true, trail: [] };
+      bodies.push(starBody);
+    }
+    starBody.mass = sett.starMass; starBody.r = radiusOf(sett.starMass);
+  }
+  function removeStar() {
+    if (starBody) { const i = bodies.indexOf(starBody); if (i >= 0) bodies.splice(i, 1); starBody = null; }
+  }
+  function addBody(x, y, vx, vy, mass) {
+    if (movableCount() >= MAX_BODIES) return null;
+    const b = { x, y, vx, vy, mass, r: radiusOf(mass), fixed: false, trail: [] };
+    bodies.push(b); return b;
+  }
+  function addAnchor(x, y, mass) {
+    const b = { x, y, vx: 0, vy: 0, mass, r: radiusOf(mass), fixed: true, anchor: true, trail: [] };
+    bodies.push(b); return b;
+  }
+  const movableCount = () => bodies.reduce((n, b) => n + (b.fixed ? 0 : 1), 0);
+  function dominantAttractor(x, y) {
+    // heaviest body weighted by proximity — good enough to seed an orbit
+    let best = null, bestScore = -1;
+    for (const b of bodies) {
+      if (b.x === x && b.y === y) continue;
+      const d = Math.hypot(b.x - x, b.y - y) + 1;
+      const score = b.mass / d;
+      if (score > bestScore) { bestScore = score; best = b; }
+    }
+    return best;
+  }
+
+  // ---------- physics ----------
+  function advance(h) {
+    // accelerations (movable only; every body with mass is a source)
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      if (b.fixed) continue;
+      let ax = 0, ay = 0;
+      for (let j = 0; j < bodies.length; j++) {
+        if (j === i) continue;
+        const o = bodies[j];
+        const dx = o.x - b.x, dy = o.y - b.y;
+        const d2 = dx * dx + dy * dy + SOFT * SOFT;
+        const inv = 1 / Math.sqrt(d2);
+        const f = (sett.G * o.mass) / d2;
+        ax += f * dx * inv; ay += f * dy * inv;
+      }
+      b._ax = ax; b._ay = ay;
+    }
+    for (const b of bodies) {
+      if (b.fixed) continue;
+      b.vx += b._ax * h; b.vy += b._ay * h;
+      const sp = Math.hypot(b.vx, b.vy);
+      if (sp > CAP) { b.vx = b.vx / sp * CAP; b.vy = b.vy / sp * CAP; }
+      b.x += b.vx * h; b.y += b.vy * h;
+    }
+    collide();
+  }
+
+  function collide() {
+    if (sett.collide === "off") return;
+    const merge = sett.collide === "merge";
+    for (let i = 0; i < bodies.length; i++) {
+      for (let j = i + 1; j < bodies.length; j++) {
+        const a = bodies[i], b = bodies[j];
+        if (a.fixed && b.fixed) continue;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy) || 0.0001;
+
+        if (merge) {
+          if (dist < (a.r + b.r) * 0.72) {
+            // fixed attractor absorbs the movable one
+            if (a.fixed || b.fixed) {
+              const fixed = a.fixed ? a : b, mov = a.fixed ? b : a;
+              flash(mov.x, mov.y, mov.r * 2.4, fixed.sun ? [255, 207, 92] : [150, 120, 255]);
+              const k = bodies.indexOf(mov); bodies.splice(k, 1); merges++;
+              if (k <= i) i--;
+              j = i; break;
+            }
+            const m = a.mass + b.mass;
+            a.x = (a.x * a.mass + b.x * b.mass) / m;
+            a.y = (a.y * a.mass + b.y * b.mass) / m;
+            a.vx = (a.vx * a.mass + b.vx * b.mass) / m;
+            a.vy = (a.vy * a.mass + b.vy * b.mass) / m;
+            a.mass = m; a.r = radiusOf(m);
+            flash(a.x, a.y, Math.max(a.r, b.r) * 2.6, ramp(m / 900));
+            bodies.splice(j, 1); merges++; j--;
+          }
+        } else { // bounce
+          const mind = a.r + b.r;
+          if (dist < mind) {
+            const nx = dx / dist, ny = dy / dist;
+            const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
+            const vn = rvx * nx + rvy * ny;
+            const e = 0.9;
+            if (a.fixed || b.fixed) {
+              const mov = a.fixed ? b : a, sign = a.fixed ? 1 : -1;
+              const nvn = (mov.vx * (sign * nx) + mov.vy * (sign * ny));
+              if (nvn < 0) {
+                mov.vx -= (1 + e) * nvn * (sign * nx);
+                mov.vy -= (1 + e) * nvn * (sign * ny);
+              }
+              const overlap = mind - dist;
+              mov.x += sign * nx * overlap; mov.y += sign * ny * overlap;
+              flash((a.x + b.x) / 2, (a.y + b.y) / 2, mind * 0.6, [180, 170, 255]);
+            } else if (vn < 0) {
+              const im = 1 / a.mass + 1 / b.mass;
+              const jimp = -(1 + e) * vn / im;
+              a.vx -= jimp / a.mass * nx; a.vy -= jimp / a.mass * ny;
+              b.vx += jimp / b.mass * nx; b.vy += jimp / b.mass * ny;
+              const overlap = (mind - dist) / im;
+              a.x -= nx * overlap / a.mass; a.y -= ny * overlap / a.mass;
+              b.x += nx * overlap / b.mass; b.y += ny * overlap / b.mass;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function cull() {
+    for (let i = bodies.length - 1; i >= 0; i--) {
+      const b = bodies[i];
+      if (b.fixed) continue;
+      if (Math.hypot(b.x - cam.x, b.y - cam.y) > CULL_R) { bodies.splice(i, 1); }
+    }
+  }
+
+  function pushTrails() {
+    const cap = sett.trailLen;
+    for (const b of bodies) {
+      if (b.sun) continue;
+      if (cap <= 0) { if (b.trail.length) b.trail.length = 0; continue; }
+      b.trail.push(b.x, b.y);
+      const max = cap * 2;
+      if (b.trail.length > max) b.trail.splice(0, b.trail.length - max);
+    }
+  }
+
+  // ---------- flashes ----------
+  function flash(x, y, r, c) { flashes.push({ x, y, r, c, life: 1 }); }
+
+  // ---------- presets ----------
+  function resetView() { cam.zoom = 1; cam.x = W / 2; cam.y = H / 2; if (starBody) { starBody.x = cam.x; starBody.y = cam.y; } }
+  function clearAll(keepStar) {
+    bodies = []; starBody = null; merges = 0; flashes.length = 0;
+    if (keepStar && sett.star) ensureStar();
+  }
+  function orbitVel(cx, cy, x, y, M, factor) {
+    const dx = x - cx, dy = y - cy, r = Math.hypot(dx, dy) || 1;
+    const v = Math.sqrt(sett.G * M / r) * (factor == null ? 1 : factor);
+    return { vx: -dy / r * v, vy: dx / r * v };
+  }
+  function preset(name) {
+    resetView();
+    const cx = W / 2, cy = H / 2;
+    if (name === "empty") { clearAll(false); sett.star = false; syncStarUI(); return; }
+    sett.star = true; syncStarUI();
+    clearAll(true);
+
+    if (name === "solar") {
+      const n = 9;
+      for (let i = 0; i < n; i++) {
+        const ang = (i * 2.399) + i * 0.2;
+        const dist = 78 + i * 42;
+        const x = cx + Math.cos(ang) * dist, y = cy + Math.sin(ang) * dist;
+        const v = orbitVel(cx, cy, x, y, sett.starMass, 0.95);
+        addBody(x, y, v.vx, v.vy, 26 + i * 20);
+      }
+    } else if (name === "rings") {
+      const n = 46;
+      for (let i = 0; i < n; i++) {
+        const ang = (i / n) * TAU;
+        const dist = 150 + (i % 3) * 26;
+        const x = cx + Math.cos(ang) * dist, y = cy + Math.sin(ang) * dist;
+        const v = orbitVel(cx, cy, x, y, sett.starMass, 1.0);
+        addBody(x, y, v.vx, v.vy, 14);
+      }
+    } else if (name === "binary") {
+      // two heavy bodies orbiting their barycenter + satellites
+      sett.star = false; removeStar(); syncStarUI();
+      const M = 1500, sep = 150;
+      const a = addBody(cx - sep, cy, 0, 0, M);
+      const b = addBody(cx + sep, cy, 0, 0, M);
+      // circular orbit about center for equal masses: v = sqrt(G*M/(4*sep)) each, opposite
+      const v = Math.sqrt(sett.G * M / (4 * sep));
+      a.vy = -v; b.vy = v;
+      for (let i = 0; i < 10; i++) {
+        const ang = (i / 10) * TAU;
+        const dist = 300 + (i % 2) * 40;
+        const x = cx + Math.cos(ang) * dist, y = cy + Math.sin(ang) * dist;
+        const ov = orbitVel(cx, cy, x, y, 2 * M, 0.9);
+        addBody(x, y, ov.vx, ov.vy, 10);
+      }
+    } else if (name === "bigbang") {
+      // a star-less explosion: burst outward, then let it clump under its own gravity
+      sett.star = false; removeStar(); syncStarUI();
+      const n = 130;
+      for (let i = 0; i < n; i++) {
+        const ang = (i * 2.399);
+        const speed = 3 + (i % 7) * 1.0;
+        const d = 5 + (i % 11) * 2.5;
+        addBody(cx + Math.cos(ang) * d, cy + Math.sin(ang) * d,
+                Math.cos(ang) * speed, Math.sin(ang) * speed, 6 + (i % 4) * 4);
+      }
+    } else if (name === "chaos") {
+      // pure n-body cluster (no star) — merges into a few heavy survivors
+      sett.star = false; removeStar(); syncStarUI();
+      const n = 60;
+      let s = 99173;
+      const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+      for (let i = 0; i < n; i++) {
+        const x = cx + (rnd() - 0.5) * 620, y = cy + (rnd() - 0.5) * 460;
+        addBody(x, y, (rnd() - 0.5) * 2.4, (rnd() - 0.5) * 2.4, 12 + rnd() * 60);
+      }
+    }
+  }
+
+  // ---------- starfield ----------
+  let stars = [];
+  function makeStars() {
+    const n = Math.round((W * H) / 4200);
+    stars = [];
+    let s = 20261;
+    const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    for (let i = 0; i < n; i++) {
+      stars.push({ x: rnd(), y: rnd(), r: rnd() * 1.2 + 0.25, a: rnd() * 0.5 + 0.1,
+                   tw: rnd() * TAU, ts: rnd() * 1.4 + 0.4, layer: rnd() < 0.35 ? 0.10 : 0.04 });
+    }
+  }
+
+  // ---------- render ----------
+  function paintBg() {
+    const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.72);
+    g.addColorStop(0, "#0c0a1a"); g.addColorStop(1, "#050409");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  function drawStars(t) {
+    for (const s of stars) {
+      const px = ((s.x * W - cam.x * s.layer) % W + W) % W;
+      const py = ((s.y * H - cam.y * s.layer) % H + H) % H;
+      const tw = reduce ? 0.8 : 0.6 + 0.4 * Math.sin(t * 0.001 * s.ts + s.tw);
+      ctx.fillStyle = `rgba(202,206,255,${s.a * tw})`;
+      ctx.beginPath(); ctx.arc(px, py, s.r, 0, TAU); ctx.fill();
+    }
+  }
+  function drawTrails() {
+    if (sett.trailLen <= 0) return;
+    ctx.lineWidth = 1.4; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for (const b of bodies) {
+      const tr = b.trail;
+      if (tr.length < 4) continue;
+      const c = colorOf(b);
+      const x0 = sx(tr[0]), y0 = sy(tr[1]);
+      const xn = sx(tr[tr.length - 2]), yn = sy(tr[tr.length - 1]);
+      const grad = ctx.createLinearGradient(x0, y0, xn, yn);
+      grad.addColorStop(0, rgb(c, 0));
+      grad.addColorStop(1, rgb(c, 0.5));
+      ctx.strokeStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      for (let k = 2; k < tr.length; k += 2) ctx.lineTo(sx(tr[k]), sy(tr[k + 1]));
+      ctx.stroke();
+    }
+  }
+  function drawBody(b) {
+    const c = colorOf(b);
+    const r = Math.max(1, b.r * cam.zoom);
+    const cx = sx(b.x), cy = sy(b.y);
+    const glow = r * 4.2;
+    ctx.globalCompositeOperation = "lighter";
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, glow);
+    g.addColorStop(0, rgb(c, 0.5)); g.addColorStop(0.25, rgb(c, 0.2)); g.addColorStop(1, rgb(c, 0));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, glow, 0, TAU); ctx.fill();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = rgb(c, 1); ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath(); ctx.arc(cx - r * 0.25, cy - r * 0.25, Math.max(0.5, r * 0.34), 0, TAU); ctx.fill();
+  }
+  function drawAnchor(b) {
+    const r = Math.max(2, b.r * cam.zoom), cx = sx(b.x), cy = sy(b.y);
+    ctx.globalCompositeOperation = "lighter";
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 3.2);
+    g.addColorStop(0, "rgba(150,110,255,0.35)"); g.addColorStop(1, "rgba(150,110,255,0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r * 3.2, 0, TAU); ctx.fill();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "#0a0714"; ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "rgba(178,140,255,0.9)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke();
+  }
+  function drawStar(b, t) {
+    const cx = sx(b.x), cy = sy(b.y), r = Math.max(3, b.r * cam.zoom);
+    const pulse = reduce ? 1 : 1 + 0.03 * Math.sin(t * 0.002);
+    ctx.globalCompositeOperation = "lighter";
+    const glow = r * 3.4 * pulse;
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, glow);
+    g.addColorStop(0, "rgba(255,236,180,0.5)"); g.addColorStop(0.3, "rgba(255,180,90,0.16)"); g.addColorStop(1, "rgba(255,180,90,0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, glow, 0, TAU); ctx.fill();
+    ctx.globalCompositeOperation = "source-over";
+    const core = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.2, 1, cx, cy, r);
+    core.addColorStop(0, "#fff6e0"); core.addColorStop(1, "#ffb84d");
+    ctx.fillStyle = core; ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill();
+  }
+  function drawFlashes(dt) {
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = flashes.length - 1; i >= 0; i--) {
+      const f = flashes[i];
+      f.life -= dt * 0.9;
+      if (f.life <= 0) { flashes.splice(i, 1); continue; }
+      const rr = f.r * cam.zoom * (1 + (1 - f.life) * 2.2);
+      const cx = sx(f.x), cy = sy(f.y);
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
+      g.addColorStop(0, rgb(f.c, 0.5 * f.life)); g.addColorStop(1, rgb(f.c, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, rr, 0, TAU); ctx.fill();
+    }
+    ctx.globalCompositeOperation = "source-over";
+  }
+  function drawAim() {
+    if (!drag.active) return;
+    const c = mode === "anchor" ? [150, 120, 255] : ramp(drag.mass / 900);
+    const px = sx(drag.wx0), py = sy(drag.wy0);
+    const r = Math.max(2, radiusOf(drag.mass) * cam.zoom);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = rgb(c, 0.9); ctx.fillStyle = rgb(c, 0.22); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(px, py, r, 0, TAU); ctx.fill(); ctx.stroke();
+    if (mode === "fling") {
+      const dx = px - drag.px, dy = py - drag.py;
+      if (Math.hypot(dx, dy) > 4) {
+        ctx.strokeStyle = rgb(c, 0.5); ctx.setLineDash([4, 5]);
+        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + dx, py + dy); ctx.stroke();
+        ctx.setLineDash([]);
+        const ang = Math.atan2(dy, dx), hx = px + dx, hy = py + dy;
+        ctx.fillStyle = rgb(c, 0.7);
+        ctx.beginPath(); ctx.moveTo(hx, hy);
+        ctx.lineTo(hx - 9 * Math.cos(ang - 0.4), hy - 9 * Math.sin(ang - 0.4));
+        ctx.lineTo(hx - 9 * Math.cos(ang + 0.4), hy - 9 * Math.sin(ang + 0.4));
+        ctx.closePath(); ctx.fill();
+      }
+    }
+  }
+  function updateHover() {
+    hover = null;
+    if (drag.active || pan.active || mouse.px == null) return;
+    let best = null, bestD = 14;
+    for (const b of bodies) {
+      const d = Math.hypot(sx(b.x) - mouse.px, sy(b.y) - mouse.py);
+      const rr = Math.max(6, b.r * cam.zoom);
+      if (d < rr + 6 && d - rr < bestD) { bestD = d - rr; best = b; }
+    }
+    hover = best;
+  }
+  function drawHover() {
+    if (!hover) return;
+    const b = hover, cx = sx(b.x), cy = sy(b.y), r = Math.max(3, b.r * cam.zoom);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(cx, cy, r + 5, 0, TAU); ctx.stroke();
+    const label = b.sun ? "star" : b.anchor ? "anchor" : `m ${Math.round(b.mass)} · v ${Math.hypot(b.vx, b.vy).toFixed(1)}`;
+    ctx.font = "11px ui-monospace, monospace";
+    const tw = ctx.measureText(label).width;
+    const lx = cx + r + 9, ly = cy - r - 9;
+    ctx.fillStyle = "rgba(12,10,26,0.82)";
+    ctx.fillRect(lx - 5, ly - 12, tw + 10, 18);
+    ctx.fillStyle = "rgba(234,232,246,0.95)"; ctx.textBaseline = "middle";
+    ctx.fillText(label, lx, ly - 2);
+  }
+
+  // ---------- main loop ----------
+  let last = 0, fps = 60, frame = 0, nowT = 0;
+  function render(t) {
+    paintBg();
+    drawStars(t);
+    drawTrails();
+    ctx.globalCompositeOperation = "source-over";
+    for (const b of bodies) { if (!b.sun && !b.anchor) drawBody(b); }
+    for (const b of bodies) { if (b.anchor) drawAnchor(b); }
+    for (const b of bodies) { if (b.sun) drawStar(b, t); }
+    ctx.globalCompositeOperation = "source-over";
+    drawFlashes(1 / 60);
+    drawHover();
+    drawAim();
+  }
+  function loop(t) {
+    nowT = t;
+    if (W === 0) { resize(); bootWorld(); }
+    const raw = last ? (t - last) : 16.7; last = t;
+    if (W > 0) {
+      let frames = clamp(raw / 16.7, 0, 2.6) * sett.speed;
+      if (!paused && frames > 0) {
+        const steps = clamp(Math.ceil(frames / 0.5), 1, 10); // keep substep <= ~0.5 for stability
+        const hh = frames / steps;
+        for (let s = 0; s < steps; s++) advance(hh);
+        cull();
+        pushTrails();
+      }
+      updateHover();
+      render(t);
+      frame++;
+      if (frame % 10 === 0) {
+        fps = fps * 0.8 + (1000 / raw) * 0.2;
+        rCount.textContent = movableCount();
+        rMass.textContent = Math.round(bodies.reduce((s, b) => s + (b.fixed ? 0 : b.mass), 0)).toLocaleString();
+        rMerge.textContent = merges;
+        rZoom.textContent = cam.zoom.toFixed(2) + "×";
+        rFps.textContent = Math.round(fps);
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- input ----------
+  const drag = { active: false, id: null, px: 0, py: 0, wx0: 0, wy0: 0, mass: 42 };
+  const pan = { active: false, id: null, lx: 0, ly: 0 };
+  const mouse = { px: null, py: null };
+  const pointers = new Map();
+
+  function zoomAt(px, py, factor) {
+    const bx = wx(px), by = wy(py);
+    cam.zoom = clamp(cam.zoom * factor, 0.15, 6);
+    cam.x = bx - (px - W / 2) / cam.zoom;
+    cam.y = by - (py - H / 2) / cam.zoom;
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    dismissHint();
+
+    if (pointers.size >= 2) { // gesture pan — cancel any spawn
+      drag.active = false; pan.active = false;
+      gesture.active = true; gesture.mid = gestureMid();
+      return;
+    }
+    if (e.button === 2 || e.button === 1) { // right / middle → pan
+      pan.active = true; pan.id = e.pointerId; pan.lx = e.clientX; pan.ly = e.clientY;
+      canvas.classList.add("panning");
+      return;
+    }
+    // left → spawn per mode
+    drag.active = true; drag.id = e.pointerId;
+    drag.px = e.clientX; drag.py = e.clientY;
+    drag.wx0 = wx(e.clientX); drag.wy0 = wy(e.clientY);
+    drag.mass = mode === "anchor" ? 3200 : 42;
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    mouse.px = e.clientX; mouse.py = e.clientY;
+    const p = pointers.get(e.pointerId); if (p) { p.x = e.clientX; p.y = e.clientY; }
+
+    if (gesture.active && pointers.size >= 2) {
+      const m = gestureMid();
+      cam.x -= (m.x - gesture.mid.x) / cam.zoom;
+      cam.y -= (m.y - gesture.mid.y) / cam.zoom;
+      gesture.mid = m;
+      return;
+    }
+    if (pan.active && e.pointerId === pan.id) {
+      cam.x -= (e.clientX - pan.lx) / cam.zoom;
+      cam.y -= (e.clientY - pan.ly) / cam.zoom;
+      pan.lx = e.clientX; pan.ly = e.clientY;
+      return;
+    }
+    if (drag.active && e.pointerId === drag.id) { drag.px = e.clientX; drag.py = e.clientY; }
+  });
+
+  function endPointer(e) {
+    const wasDrag = drag.active && e.pointerId === drag.id;
+    pointers.delete(e.pointerId);
+    if (gesture.active && pointers.size < 2) gesture.active = false;
+    if (pan.active && e.pointerId === pan.id) { pan.active = false; canvas.classList.remove("panning"); }
+    if (wasDrag) {
+      drag.active = false;
+      const wxE = wx(e.clientX), wyE = wy(e.clientY);
+      if (mode === "fling") {
+        const k = 0.05;
+        addBody(drag.wx0, drag.wy0, (drag.wx0 - wxE) * k, (drag.wy0 - wyE) * k, drag.mass);
+      } else if (mode === "anchor") {
+        addAnchor(drag.wx0, drag.wy0, drag.mass);
+      } else if (mode === "orbit") {
+        const att = dominantAttractor(drag.wx0, drag.wy0);
+        if (att) {
+          const v = orbitVel(att.x, att.y, drag.wx0, drag.wy0, att.mass, 0.98);
+          addBody(drag.wx0, drag.wy0, att.vx + v.vx, att.vy + v.vy, drag.mass);
+        } else {
+          addBody(drag.wx0, drag.wy0, 0, 0, drag.mass);
+        }
+      }
+    }
+  }
+  canvas.addEventListener("pointerup", endPointer);
+  canvas.addEventListener("pointercancel", endPointer);
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  canvas.addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+
+  const gesture = { active: false, mid: { x: 0, y: 0 } };
+  function gestureMid() {
+    let x = 0, y = 0, n = 0;
+    for (const p of pointers.values()) { x += p.x; y += p.y; n++; }
+    return { x: x / n, y: y / n };
+  }
+
+  // charge growth
+  (function chargeTick() {
+    if (drag.active) drag.mass = Math.min(mode === "anchor" ? 6000 : 1400, drag.mass + 14);
+    setTimeout(chargeTick, 33);
+  })();
+
+  // ---------- UI wiring ----------
+  const $ = (id) => document.getElementById(id);
+  const rCount = $("r-count"), rMass = $("r-mass"), rMerge = $("r-merge"), rZoom = $("r-zoom"), rFps = $("r-fps");
+  const hint = $("hint"); let hintGone = false;
+  function dismissHint() { if (!hintGone) { hintGone = true; hint.classList.add("gone"); } }
+
+  const modeBtns = { fling: $("m-fling"), orbit: $("m-orbit"), anchor: $("m-anchor") };
+  function setMode(m) { mode = m; for (const k in modeBtns) modeBtns[k].setAttribute("aria-pressed", String(k === m)); }
+  modeBtns.fling.onclick = () => setMode("fling");
+  modeBtns.orbit.onclick = () => setMode("orbit");
+  modeBtns.anchor.onclick = () => setMode("anchor");
+
+  const bPause = $("b-pause"), icPause = $("ic-pause");
+  function setPaused(p) {
+    paused = p; bPause.setAttribute("aria-pressed", String(p));
+    icPause.innerHTML = p ? '<path d="M8 5v14l11-7z"/>' : '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>';
+    if (p) { last = 0; }
+  }
+  bPause.onclick = () => setPaused(!paused);
+  $("b-clear").onclick = () => clearAll(true);
+  $("b-save").onclick = () => {
+    const a = document.createElement("a");
+    a.download = "orrery.png"; a.href = canvas.toDataURL("image/png"); a.click();
+  };
+
+  const panel = $("panel"), bSettings = $("b-settings");
+  function setPanel(open) { panel.classList.toggle("open", open); panel.setAttribute("aria-hidden", String(!open)); bSettings.setAttribute("aria-pressed", String(open)); }
+  bSettings.onclick = () => setPanel(!panel.classList.contains("open"));
+  $("p-close").onclick = () => setPanel(false);
+
+  $("z-in").onclick = () => zoomAt(W / 2, H / 2, 1.3);
+  $("z-out").onclick = () => zoomAt(W / 2, H / 2, 1 / 1.3);
+  $("z-reset").onclick = () => resetView();
+
+  document.querySelectorAll("[data-preset]").forEach(btn =>
+    btn.onclick = () => { preset(btn.dataset.preset); dismissHint(); });
+
+  // sliders
+  function bindRange(id, valId, fmt, apply) {
+    const el = $(id), vEl = $(valId);
+    const upd = () => {
+      const v = parseFloat(el.value);
+      el.style.setProperty("--fill", ((v - el.min) / (el.max - el.min) * 100) + "%");
+      vEl.textContent = fmt(v); apply(v);
+    };
+    el.addEventListener("input", upd); upd();
+  }
+  bindRange("s-grav", "v-grav", v => v.toFixed(2), v => sett.G = v);
+  bindRange("s-speed", "v-speed", v => v.toFixed(2) + "×", v => sett.speed = v);
+  bindRange("s-star", "v-star", v => String(v), v => { sett.starMass = v; if (starBody) { starBody.mass = v; starBody.r = radiusOf(v); } });
+  bindRange("s-trail", "v-trail", v => String(v), v => sett.trailLen = v);
+
+  const tStar = $("t-star");
+  function syncStarUI() { tStar.setAttribute("aria-pressed", String(sett.star)); }
+  tStar.onclick = () => { sett.star = !sett.star; ensureStar(); syncStarUI(); };
+
+  document.querySelectorAll("[data-collide]").forEach(btn =>
+    btn.onclick = () => {
+      sett.collide = btn.dataset.collide;
+      document.querySelectorAll("[data-collide]").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+    });
+  document.querySelectorAll("[data-color]").forEach(btn =>
+    btn.onclick = () => {
+      sett.colorBy = btn.dataset.color;
+      document.querySelectorAll("[data-color]").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+    });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT") return;
+    const k = e.key.toLowerCase();
+    if (e.key === " ") { e.preventDefault(); setPaused(!paused); }
+    else if (k === "c") clearAll(true);
+    else if (k === "r") resetView();
+    else if (k === "1") setMode("fling");
+    else if (k === "2") setMode("orbit");
+    else if (k === "3") setMode("anchor");
+    else if (k === "g") { preset("bigbang"); dismissHint(); }
+  });
+
+  // ---------- resize / lifecycle ----------
+  function resize() {
+    // Measure the canvas's own rendered box first (it's CSS-pinned to 100%). This is
+    // the size we actually need to match, and it's reliable even when window.innerWidth
+    // reports 0 (some embedded/iframe contexts). Fall back to the window/document.
+    const rect = canvas.getBoundingClientRect();
+    const nw = Math.round(rect.width) || window.innerWidth || document.documentElement.clientWidth || 0;
+    const nh = Math.round(rect.height) || window.innerHeight || document.documentElement.clientHeight || 0;
+    if (nw === 0 || nh === 0) return;
+    if (nw === W && nh === H && canvas.width > 0) return; // no change
+    const firstX = cam.x === 0 && cam.y === 0;
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = nw; H = nh;
+    canvas.width = Math.floor(W * DPR); canvas.height = Math.floor(H * DPR);
+    canvas.style.width = W + "px"; canvas.style.height = H + "px";
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    makeStars();
+    if (firstX) { cam.x = W / 2; cam.y = H / 2; }
+    if (worldReady) render(nowT); // repaint immediately so a resize is never blank
+  }
+  window.addEventListener("resize", resize);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { last = 0; resize(); } });
+
+  // ---------- init ----------
+  // Build the starter system only once the canvas actually has a size, and paint
+  // one frame right away rather than waiting on requestAnimationFrame.
+  let worldReady = false;
+  function bootWorld() {
+    if (worldReady || W === 0) return;
+    ensureStar();
+    preset("solar");
+    worldReady = true;
+    render(nowT);
+  }
+  resize();
+  bootWorld();
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => { resize(); bootWorld(); }).observe(document.documentElement);
+  }
+  window.addEventListener("load", () => { resize(); bootWorld(); });
+  requestAnimationFrame(loop);
+
+  // Backup boot that does not depend on requestAnimationFrame firing: keep trying to
+  // size + build the world every 200ms until it succeeds, then stop.
+  const bootTimer = setInterval(() => {
+    if (worldReady) { clearInterval(bootTimer); return; }
+    resize();
+    bootWorld();
+  }, 200);
+
+  // ---------- debug hook (harmless; used for headless verification) ----------
+  window.__orrery = {
+    // one "frame" = two 0.5 substeps, matching the 60fps loop
+    step(n = 1) { for (let i = 0; i < n; i++) { advance(0.5); advance(0.5); cull(); pushTrails(); } },
+    render() { render(nowT); },
+    state: () => ({ count: movableCount(), total: bodies.length, merges, zoom: cam.zoom,
+      camx: cam.x, camy: cam.y, W, H, star: !!starBody, mode, collide: sett.collide }),
+    bodies: () => bodies.map(b => ({ x: +b.x.toFixed(2), y: +b.y.toFixed(2), vx: +b.vx.toFixed(3), vy: +b.vy.toFixed(3), m: b.mass, fixed: !!b.fixed, sun: !!b.sun })),
+    energy() {
+      let ke = 0; for (const b of bodies) if (!b.fixed) ke += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy);
+      return ke;
+    },
+    clear: () => clearAll(false), ensureStar, addBody, preset, setMode, sett, cam,
+  };
+  } catch (__initErr) {
+    try { document.documentElement.setAttribute("data-orrery-error", (__initErr && __initErr.stack) || String(__initErr)); } catch (_) {}
+    try { const s = document.querySelector(".subtitle"); if (s) { s.textContent = "ERR " + String(__initErr).slice(0, 160); s.style.color = "#ff7597"; } } catch (_) {}
+  }
+})();
+</script>
