@@ -4,7 +4,7 @@ A little N-body gravity sandbox that lives in a single canvas. No framework, no 
 
 It started as a "make something cool" afternoon and kept growing. The thing I like about it is that there's no goal, you just plant a star, sling a few worlds past it at the right speed, and watch whether they settle into orbits or fall in. Get it slightly wrong and a planet whips around once and slingshots off into the dark. Get it right and it'll circle quietly for as long as you leave it running.
 
-🌐 **Play it live:** [orrery-dusky.vercel.app](https://orrery-dusky.vercel.app/)
+🌐 **Play it live:** [orreryonline.vercel.app](https://orreryonline.vercel.app/)
 
 On load you get a star with nine planets already in orbit, so there's something moving the moment it opens.
 
