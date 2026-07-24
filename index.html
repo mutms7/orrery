@@ -438,7 +438,7 @@
             const nx = dx / dist, ny = dy / dist;
             const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
             const vn = rvx * nx + rvy * ny;
-            const e = 0.9;
+            const e = 1; // perfectly elastic
             if (a.fixed || b.fixed) {
               const mov = a.fixed ? b : a, sign = a.fixed ? 1 : -1;
               const nvn = (mov.vx * (sign * nx) + mov.vy * (sign * ny));
@@ -448,7 +448,6 @@
               }
               const overlap = mind - dist;
               mov.x += sign * nx * overlap; mov.y += sign * ny * overlap;
-              flash((a.x + b.x) / 2, (a.y + b.y) / 2, mind * 0.6, [180, 170, 255]);
             } else if (vn < 0) {
               const im = 1 / a.mass + 1 / b.mass;
               const jimp = -(1 + e) * vn / im;
