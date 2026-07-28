@@ -142,6 +142,23 @@ test("bounce mode never removes bodies", () => {
   assert.equal(O.state().count, before);
 });
 
+test("bounce is perfectly elastic (restitution 1) for object-object collisions", () => {
+  const O = boot();
+  O.clear();
+  O.sett.star = false;
+  O.sett.G = 0;            // isolate the collision from gravity
+  O.sett.collide = "bounce";
+  O.addBody(O.cam.x - 60, O.cam.y, 4, 0, 40);
+  O.addBody(O.cam.x + 60, O.cam.y, -4, 0, 40);
+  const ke = () => O.bodies().filter((b) => !b.fixed).reduce((s, b) => s + 0.5 * b.m * (b.vx * b.vx + b.vy * b.vy), 0);
+  const before = ke();
+  O.step(40); // let them meet and separate
+  const after = ke();
+  assert.ok(Math.abs(after - before) / before < 0.01, `kinetic energy not conserved: ${before.toFixed(1)} -> ${after.toFixed(1)}`);
+  const vxs = O.bodies().filter((b) => !b.fixed).map((b) => b.vx);
+  assert.ok(vxs.some((v) => v < -0.5) && vxs.some((v) => v > 0.5), "bodies did not rebound off each other");
+});
+
 test("no NaN or Infinity leaks into the state", () => {
   const O = boot();
   O.preset("bigbang");

@@ -248,11 +248,12 @@
 
   <div class="group">
     <div class="label">Collisions</div>
-    <div class="segfull" role="group" aria-label="collision mode">
+    <div class="segfull" role="group" aria-label="collision mode" style="margin-bottom:12px">
       <button data-collide="merge" aria-pressed="true">Merge</button>
       <button data-collide="bounce" aria-pressed="false">Bounce</button>
       <button data-collide="off" aria-pressed="false">Off</button>
     </div>
+    <div class="toggle-row"><span>Collision flash</span><button class="switch" id="t-flash" aria-pressed="false" aria-label="collision flash"></button></div>
   </div>
 
   <div class="group">
@@ -288,7 +289,7 @@
   const TAU = Math.PI * 2;
 
   // ---------- settings ----------
-  const sett = { G: 0.9, speed: 1, starMass: 2600, star: true, collide: "merge", colorBy: "mass", trailLen: 46 };
+  const sett = { G: 0.9, speed: 1, starMass: 2600, star: true, collide: "merge", colorBy: "mass", trailLen: 46, flash: false };
 
   // ---------- state ----------
   let W = 0, H = 0, DPR = 1;
@@ -439,12 +440,14 @@
             const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
             const vn = rvx * nx + rvy * ny;
             const e = 1; // perfectly elastic
+            const cxp = a.x + nx * a.r, cyp = a.y + ny * a.r; // contact point on a's surface
             if (a.fixed || b.fixed) {
               const mov = a.fixed ? b : a, sign = a.fixed ? 1 : -1;
               const nvn = (mov.vx * (sign * nx) + mov.vy * (sign * ny));
               if (nvn < 0) {
                 mov.vx -= (1 + e) * nvn * (sign * nx);
                 mov.vy -= (1 + e) * nvn * (sign * ny);
+                flash(cxp, cyp, clamp(-nvn * 0.9, 2.5, 18), [200, 205, 255]);
               }
               const overlap = mind - dist;
               mov.x += sign * nx * overlap; mov.y += sign * ny * overlap;
@@ -456,6 +459,7 @@
               const overlap = (mind - dist) / im;
               a.x -= nx * overlap / a.mass; a.y -= ny * overlap / a.mass;
               b.x += nx * overlap / b.mass; b.y += ny * overlap / b.mass;
+              flash(cxp, cyp, clamp(-vn * 0.9, 2.5, 18), [200, 205, 255]);
             }
           }
         }
@@ -483,7 +487,7 @@
   }
 
   // ---------- flashes ----------
-  function flash(x, y, r, c) { flashes.push({ x, y, r, c, life: 1 }); }
+  function flash(x, y, r, c) { if (!sett.flash) return; flashes.push({ x, y, r, c, life: 1 }); }
 
   // ---------- presets ----------
   function resetView() { cam.zoom = 1; cam.x = W / 2; cam.y = H / 2; if (starBody) { starBody.x = cam.x; starBody.y = cam.y; } }
@@ -907,6 +911,9 @@
   function syncStarUI() { tStar.setAttribute("aria-pressed", String(sett.star)); }
   tStar.onclick = () => { sett.star = !sett.star; ensureStar(); syncStarUI(); };
 
+  const tFlash = $("t-flash");
+  tFlash.onclick = () => { sett.flash = !sett.flash; tFlash.setAttribute("aria-pressed", String(sett.flash)); };
+
   document.querySelectorAll("[data-collide]").forEach(btn =>
     btn.onclick = () => {
       sett.collide = btn.dataset.collide;
@@ -986,7 +993,7 @@
     step(n = 1) { for (let i = 0; i < n; i++) { advance(0.5); advance(0.5); cull(); pushTrails(); } },
     render() { render(nowT); },
     state: () => ({ count: movableCount(), total: bodies.length, merges, zoom: cam.zoom,
-      camx: cam.x, camy: cam.y, W, H, star: !!starBody, mode, collide: sett.collide }),
+      camx: cam.x, camy: cam.y, W, H, star: !!starBody, mode, collide: sett.collide, flashes: flashes.length }),
     bodies: () => bodies.map(b => ({ x: +b.x.toFixed(2), y: +b.y.toFixed(2), vx: +b.vx.toFixed(3), vy: +b.vy.toFixed(3), m: b.mass, fixed: !!b.fixed, sun: !!b.sun })),
     energy() {
       let ke = 0; for (const b of bodies) if (!b.fixed) ke += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy);
