@@ -6,6 +6,10 @@ It started as a "make something cool" afternoon and kept growing. The thing I li
 
 🌐 **Play it live:** [orreryonline.vercel.app](https://orreryonline.vercel.app/)
 
+![The default starting layout: a star with nine planets already orbiting it, trails included](docs/screenshots/initial-state.png)
+
+![A field after a few slingshot flings: heavier merged bodies orbiting the star with glowing trails](docs/screenshots/slingshot-action.png)
+
 On load you get a star with nine planets already in orbit, so there's something moving the moment it opens.
 
 ## Run it
